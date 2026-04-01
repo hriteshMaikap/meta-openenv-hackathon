@@ -1,0 +1,102 @@
+name: etl-pipeline-agent
+version: "1.0.0"
+description: >
+  LLM agent learns to build, debug, and repair ETL data pipelines.
+  Agent receives a broken dataset and must identify faults, write
+  transformation code, validate data quality, and submit clean output.
+  Three tasks (easy→hard) with dense multi-objective rewards.
+  Fully deterministic grading — no LLM judge per step.
+
+author: "OpenEnv Hackathon"
+license: Apache-2.0
+
+tasks:
+  - id: easy
+    name: "Single-table data cleaning"
+    description: >
+      Agent receives one CSV (500-1000 rows) corrupted with 3-6 fault types.
+      Must fix date formats, duplicates, nulls, outliers, case inconsistency.
+    difficulty: 1
+    max_steps: 15
+    score_range: [0.0, 1.0]
+    baseline_score: 0.0   # filled in after baseline_inference.py run
+
+  - id: medium
+    name: "Multi-table join + business rule enforcement"
+    description: >
+      Agent receives 3 tables with orphaned FKs, impossible margins, typos.
+      Must join, apply business rules, standardize, and produce a fact table.
+    difficulty: 2
+    max_steps: 20
+    score_range: [0.0, 1.0]
+    baseline_score: 0.0
+
+  - id: hard
+    name: "Schema drift + incremental pipeline repair"
+    description: >
+      Medium task + mid-episode schema change (column rename/add/type change).
+      Agent must detect drift and repair without reprocessing committed rows.
+    difficulty: 3
+    max_steps: 25
+    score_range: [0.0, 1.0]
+    baseline_score: 0.0
+
+action_space:
+  type: discrete_structured
+  tools:
+    - profile_column
+    - inspect_sample
+    - write_transform
+    - execute_transform
+    - validate
+    - fix_transform
+    - load_to_target
+    - submit
+
+observation_space:
+  type: mixed_text_tabular
+  includes:
+    - dataset_sample (List[Dict])
+    - schema_current (Dict)
+    - schema_target (Dict)
+    - column_profiles (Dict)
+    - validation_scores (Dict[str, float])
+    - last_tool_output (str)
+    - transform_history (List[str])
+    - schema_drift_event (Optional[str])
+
+reward:
+  type: dense_multi_objective
+  per_step: true
+  llm_judge: "once_per_episode_at_submit"
+  verifiable_fraction: 0.95
+  llm_judge_fraction: 0.05
+  components:
+    - name: diagnostic_efficiency
+      description: "Reward for profiling relevant columns"
+    - name: execution_success
+      description: "+0.10 for clean execution, -0.08 for syntax errors"
+    - name: validation_improvement
+      description: "+0.12 per quality check that newly passes"
+    - name: final_grader
+      description: "Weighted sum of null/type/range/unique/completeness checks"
+    - name: reasoning_quality
+      description: "LLM rubric score for chain-of-thought at submit (5%)"
+
+environment:
+  backend: "pandas"
+  deterministic: true
+  requires_gpu: false
+  python_version: ">=3.10"
+  dependencies:
+    - pandas>=2.0
+    - numpy>=1.24
+    - openai>=1.0
+    - fastapi
+    - pydantic>=2.0
+    - openenv-core
+
+deployment:
+  platform: huggingface_spaces
+  hardware: cpu-basic
+  sdk: docker
